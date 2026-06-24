@@ -12,6 +12,13 @@ class Transcriber:
     """Transcribes audio using a local Whisper model via faster-whisper."""
 
     _TARGET_SAMPLE_RATE = 16000
+    _MODEL_REPOS = {
+        "tiny": "Systran/faster-whisper-tiny",
+        "base": "Systran/faster-whisper-base",
+        "small": "Systran/faster-whisper-small",
+        "medium": "Systran/faster-whisper-medium",
+        "large-v3": "Systran/faster-whisper-large-v3",
+    }
 
     def __init__(
         self,
@@ -55,6 +62,39 @@ class Transcriber:
                     f"Failed to load Whisper model '{self.model_size}'. "
                     "This can happen if the model download fails or the runtime is unsupported."
                 ) from exc
+
+    def is_model_cached(self) -> bool:
+        """Check if the model is already downloaded locally."""
+        try:
+            from huggingface_hub import scan_cache_dir
+
+            repo_id = self._MODEL_REPOS.get(self.model_size)
+            if repo_id is None:
+                return False
+
+            cache_info = scan_cache_dir()
+            return any(repo.repo_id == repo_id and repo.size_on_disk > 0 for repo in cache_info.repos)
+        except Exception:
+            return False
+
+    def download_model(self, progress_callback=None) -> None:
+        """Download the model with optional progress reporting."""
+        from huggingface_hub import snapshot_download
+        from tqdm.auto import tqdm
+
+        repo_id = self._MODEL_REPOS.get(self.model_size, self.model_size)
+
+        if progress_callback:
+            class ProgressTqdm(tqdm):
+                def update(self, n=1):
+                    super().update(n)
+                    if self.total:
+                        progress_callback(self.n, self.total)
+
+            snapshot_download(repo_id, tqdm_class=ProgressTqdm)
+            return
+
+        snapshot_download(repo_id)
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
         """Transcribe audio array to text."""

@@ -66,6 +66,7 @@ class DictationApp:
     STATE_PROCESSING = "processing"
 
     _ERROR_OVERLAY_COLOUR = "#c0392b"
+    _INFO_OVERLAY_COLOUR = "#007aff"
     _OVERLAY_HIDE_DELAY_SECONDS = 1.5
     _CLIPBOARD_DELAY_SECONDS = 0.05
 
@@ -170,6 +171,17 @@ class DictationApp:
         self.overlay.show_processing()
         self.tray.set_status("Processing...")
 
+    def _show_download_progress(self, text: str) -> None:
+        """Show download/loading status on the overlay."""
+        self._bump_overlay_token()
+        self.tray.set_status(text)
+        try:
+            self.overlay._run_on_ui_thread(
+                self.overlay._show_state, self._INFO_OVERLAY_COLOUR, text, False
+            )
+        except Exception:
+            pass
+
     def _show_error_overlay(self, message: str) -> None:
         token = self._bump_overlay_token()
 
@@ -225,12 +237,30 @@ class DictationApp:
         threading.Thread(target=self._preload_model, daemon=True).start()
 
     def _preload_model(self) -> None:
-        """Pre-load the Whisper model."""
+        """Pre-load the Whisper model, showing download progress if needed."""
         try:
+            if not self.transcriber.is_model_cached():
+                logger.info("Model not cached, downloading...")
+                self._show_download_progress("Downloading model... 0%")
+
+                def on_progress(downloaded, total):
+                    if total > 0:
+                        pct = int((downloaded / total) * 100)
+                        self._show_download_progress(f"Downloading model... {pct}%")
+
+                self.transcriber.download_model(progress_callback=on_progress)
+                logger.info("Model downloaded successfully")
+
+            self._show_download_progress("Loading model...")
             self.transcriber.load_model()
             logger.info("Model loaded successfully")
+            self._show_download_progress("Ready! Press Ctrl+Space")
+            time.sleep(self._OVERLAY_HIDE_DELAY_SECONDS)
+            self.overlay.hide()
         except Exception as exc:
             logger.warning("Model pre-load failed: %s (will retry on first use)", exc)
+            self.tray.set_status("Ready")
+            self.overlay.hide()
 
     def _shutdown(self) -> None:
         """Clean up resources."""
